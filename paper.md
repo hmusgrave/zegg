@@ -120,5 +120,5 @@ fn repair(self: @This(), eclass: EClass) void {
             self.merge(p_class, new_parents[p_node])
         new_parents[p_node] = self.find(p_class)
 
-    p_class.parents = new_parents.items()
+    eclass.parents = new_parents.items()
 }
