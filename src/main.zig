@@ -17,36 +17,6 @@ const Allocator = std.mem.Allocator;
 //    attached to the class (EClassState maybe?) and just use the DisjointSet pointer
 //    structure as the EClass.
 
-pub fn List(comptime T: type) type {
-    return struct {
-        pub const Iter = struct {
-            pub fn next(self: *@This()) ?T {
-                _ = self;
-                return null;
-            }
-        };
-
-        pub fn iter(self: *const @This()) Iter {
-            _ = self;
-            return .{};
-        }
-
-        pub fn add(self: *@This(), x: T) void {
-            _ = self;
-            _ = x;
-        }
-
-        pub fn len(self: *const @This()) usize {
-            _ = self;
-            return 0;
-        }
-
-        pub fn clone(self: *const @This()) @This() {
-            return self.*;
-        }
-    };
-}
-
 pub fn Set(comptime T: type) type {
     return struct {
         pub const Iter = struct {
@@ -148,7 +118,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
         };
 
         hashcons: Dict(ENode, *EClass),
-        worklist: List(*EClass),
+        worklist: std.ArrayList(*EClass),
         allocator: Allocator,
         raw_arena: *std.heap.ArenaAllocator,
         arena: Allocator,
@@ -160,9 +130,12 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             raw_arena.* = std.heap.ArenaAllocator.init(allocator);
             errdefer raw_arena.deinit();
 
+            var worklist = std.ArrayList(*EClass).init(allocator);
+            errdefer worklist.deinit();
+
             return @This(){
                 .hashcons = undefined,
-                .worklist = undefined,
+                .worklist = worklist,
                 .allocator = allocator,
                 .raw_arena = raw_arena,
                 .arena = raw_arena.allocator(),
@@ -170,6 +143,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
         }
 
         pub fn deinit(self: *const @This()) void {
+            self.worklist.deinit();
             self.raw_arena.deinit();
             self.allocator.destroy(self.raw_arena);
         }
@@ -188,12 +162,12 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             }
         }
 
-        pub fn merge(self: *@This(), id1: *EClass, id2: *EClass) *EClass {
+        pub fn merge(self: *@This(), id1: *EClass, id2: *EClass) !*EClass {
             if (self.find(id1) == self.find(id2))
                 return self.find(id1);
             id1.set.join(id2.set);
             const new_id = id1.set.find().value;
-            self.worklist.add(new_id);
+            try self.worklist.append(new_id);
             return new_id;
         }
 
@@ -209,20 +183,21 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             return eclass.set.find().value;
         }
 
-        pub fn rebuild(self: *@This()) void {
-            while (self.worklist.len() > 0) {
-                var todo = self.worklist.clone();
+        pub fn rebuild(self: *@This()) !void {
+            while (self.worklist.items.len > 0) {
+                var todo = try self.worklist.clone();
+                defer todo.deinit();
+                self.worklist.clearRetainingCapacity();
                 var set: Set(*EClass) = undefined;
-                var iter = todo.iter();
-                while (iter.next()) |child|
+                for (todo.items) |child|
                     set.add(self.find(child));
                 var set_iter = set.iter();
                 while (set_iter.next()) |eclass|
-                    self.repair(eclass);
+                    try self.repair(eclass);
             }
         }
 
-        pub fn repair(self: *@This(), eclass: *EClass) void {
+        pub fn repair(self: *@This(), eclass: *EClass) !void {
             var p_iter = eclass.parents.iter();
             while (p_iter.next()) |kv| {
                 self.hashcons.remove(kv.key);
@@ -237,7 +212,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             while (new_iter.next()) |kv| {
                 var p_node = self.canonicalize(kv.key);
                 if (new_parents.get(p_node)) |p_class|
-                    _ = self.merge(kv.val, p_class); // TODO: Should merge even return anything?
+                    _ = try self.merge(kv.val, p_class); // TODO: Should merge even return anything?
                 new_parents.add(p_node, self.find(kv.val));
             }
 
@@ -267,6 +242,6 @@ test {
     var enode = try E.ENode.make(.add, .{});
     if (just_false()) {
         _ = e.add(enode);
-        e.rebuild();
+        try e.rebuild();
     }
 }
