@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 // The strategy here is going to be
 // 1. Insert dummy types for all the finicky structures (dictionaries, union-find, allocators, ...)
@@ -9,6 +10,12 @@ const std = @import("std");
 // 6. We'll re-factor a bit from there
 // 7. We'll start implementing the rest of the paper
 // 8. We can worry about performance/allocations in the distant future
+//
+// TODO:
+// 1. Our notion of an EClass is some sort of doubly-linked pointer thing involving the
+//    DisjointSet pointer structure. Probably ought to split that into the data we want
+//    attached to the class (EClassState maybe?) and just use the DisjointSet pointer
+//    structure as the EClass.
 
 pub fn List(comptime T: type) type {
     return struct {
@@ -109,11 +116,28 @@ pub fn DisjointSet(comptime T: type) type {
     };
 }
 
-pub fn EGraph(comptime OpType: type) type {
+pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
     return struct {
         pub const ENode = struct {
             op: OpType,
-            children: List(*EClass),
+
+            // avoid a lot of fragmentation, pointer chasing, and memory churn
+            // in the common case of a grammar with unary/binary terms
+            _buffer: [max_node_children]*EClass = undefined,
+            _count: usize = 0,
+
+            pub inline fn children(self: *@This()) []*EClass {
+                return self._buffer[0..self._count];
+            }
+
+            pub inline fn make(op: OpType, _children: anytype) !@This() {
+                if (_children.len > max_node_children)
+                    return error.Overflow;
+                var rtn: @This() = .{ .op = op, ._count = _children.len };
+                for (rtn.children(), _children) |*target, c|
+                    target.* = c;
+                return rtn;
+            }
         };
 
         pub const U = DisjointSet(*EClass);
@@ -125,16 +149,39 @@ pub fn EGraph(comptime OpType: type) type {
 
         hashcons: Dict(ENode, *EClass),
         worklist: List(*EClass),
+        allocator: Allocator,
+        raw_arena: *std.heap.ArenaAllocator,
+        arena: Allocator,
+
+        pub fn init(allocator: Allocator) !@This() {
+            var raw_arena = try allocator.create(std.heap.ArenaAllocator);
+            errdefer allocator.destroy(raw_arena);
+
+            raw_arena.* = std.heap.ArenaAllocator.init(allocator);
+            errdefer raw_arena.deinit();
+
+            return @This(){
+                .hashcons = undefined,
+                .worklist = undefined,
+                .allocator = allocator,
+                .raw_arena = raw_arena,
+                .arena = raw_arena.allocator(),
+            };
+        }
+
+        pub fn deinit(self: *const @This()) void {
+            self.raw_arena.deinit();
+            self.allocator.destroy(self.raw_arena);
+        }
 
         pub fn add(self: *@This(), _enode: ENode) *EClass {
-            const enode = self.canonicalize(_enode);
+            var enode = self.canonicalize(_enode);
             if (self.hashcons.get(enode)) |eclass_ptr| {
                 return eclass_ptr;
             } else {
                 // TODO: allocation/creation/destruction (everywhere, not just here)
                 var eclass: EClass = undefined;
-                var iter = enode.children.iter();
-                while (iter.next()) |child|
+                for (enode.children()) |child|
                     child.parents.add(enode, &eclass);
                 self.hashcons.add(enode, &eclass);
                 return &eclass;
@@ -151,11 +198,10 @@ pub fn EGraph(comptime OpType: type) type {
         }
 
         pub fn canonicalize(self: *@This(), enode: ENode) ENode {
-            var list: List(*EClass) = undefined;
-            var iter = enode.children.iter();
-            while (iter.next()) |child|
-                list.add(self.find(child));
-            return .{ .op = enode.op, .children = list };
+            var rtn: ENode = enode;
+            for (rtn.children()) |*child|
+                child.* = self.find(child.*);
+            return rtn;
         }
 
         pub fn find(self: *@This(), eclass: *EClass) *EClass {
@@ -187,7 +233,7 @@ pub fn EGraph(comptime OpType: type) type {
             }
 
             var new_parents: Dict(ENode, *EClass) = undefined;
-            var new_iter = new_parents.iter();
+            var new_iter = eclass.parents.iter();
             while (new_iter.next()) |kv| {
                 var p_node = self.canonicalize(kv.key);
                 if (new_parents.get(p_node)) |p_class|
@@ -212,11 +258,13 @@ noinline fn just_false() bool {
 }
 
 test {
-    const E = EGraph(Ops);
-    var e: E = undefined;
+    const allocator = std.testing.allocator;
 
-    const ENode = E.ENode;
-    var enode: ENode = undefined;
+    const E = EGraph(Ops, 2);
+    var e = try E.init(allocator);
+    defer e.deinit();
+
+    var enode = try E.ENode.make(.add, .{});
     if (just_false()) {
         _ = e.add(enode);
         e.rebuild();
