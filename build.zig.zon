@@ -1,5 +1,5 @@
 .{
-    .name = "zegg2",
+    .name = "zegg",
     .version = "0.0.0",
     .dependencies = .{
         .zunion = .{
