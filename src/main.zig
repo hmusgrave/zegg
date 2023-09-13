@@ -36,8 +36,18 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
                 if (_children.len > max_node_children)
                     return error.Overflow;
                 var rtn: @This() = .{ .op = op, ._count = _children.len };
-                for (rtn.children(), _children) |*target, c|
-                    target.* = c;
+                switch (@typeInfo(@TypeOf(_children))) {
+                    .Void, .Null => {},
+                    .Array, .Pointer => {
+                        for (rtn.children(), _children) |*target, c|
+                            target.* = c;
+                    },
+                    .Struct => {
+                        inline for (rtn.children(), _children) |*target, c|
+                            target.* = c;
+                    },
+                    else => @compileError("Unsupported"),
+                }
                 return rtn;
             }
 
@@ -74,7 +84,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
 
         pub const EClass = struct {
             set: *U,
-            parents: HashCons = .{},
+            parents: HashCons,
         };
 
         const HashCons = std.HashMapUnmanaged(ENode, *EClass, ENode.HashContext, 80);
@@ -111,8 +121,10 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
 
         pub fn deinit(self: *@This()) void {
             var iter = self.all_eclasses.keyIterator();
-            while (iter.next()) |eclass_ptr|
-                eclass_ptr.*.parents.deinit(self.allocator);
+            while (iter.next()) |eclass_ptr| {
+                var parents = &(eclass_ptr.*.parents);
+                parents.deinit(self.allocator);
+            }
             self.hashcons.deinit(self.allocator);
             self.worklist.deinit();
             self.raw_arena.deinit();
@@ -126,6 +138,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             } else {
                 var eclass = try self.arena.create(EClass);
                 errdefer self.arena.destroy(eclass);
+                eclass.parents = .{};
                 var eclass_set = try U.make(self.arena, eclass);
                 errdefer self.arena.destroy(eclass_set);
                 eclass.set = eclass_set;
@@ -208,10 +221,6 @@ const Ops = enum {
     div,
 };
 
-noinline fn just_false() bool {
-    return false;
-}
-
 test {
     const allocator = std.testing.allocator;
 
@@ -220,8 +229,18 @@ test {
     defer e.deinit();
 
     var enode = try E.ENode.make(.add, .{});
-    if (just_false()) {
-        _ = try e.add(enode);
-        try e.rebuild();
-    }
+    var a = try e.add(enode);
+    var b = try e.add(enode);
+    try std.testing.expectEqual(a, b);
+
+    var c = try e.add(try E.ENode.make(.mul, .{ a, b }));
+    try e.rebuild();
+    try std.testing.expect(a != c);
+    try std.testing.expect(e.find(a) != e.find(c));
+
+    _ = try e.merge(a, c);
+    _ = try e.merge(a, b);
+    try e.rebuild();
+    try std.testing.expectEqual(e.find(a), e.find(b));
+    try std.testing.expectEqual(e.find(a), e.find(c));
 }
