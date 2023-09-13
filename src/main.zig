@@ -8,7 +8,13 @@ const DisjointSet = @import("zunion").DisjointSet;
 // 3. One-by-one, back those operations with real data structures, adding error handling where necessary
 // 4. Replace the wrapped data structures with the thing they're wrapping
 // 5. As required we'll un-const the inputs
-// 6. We'll re-factor a bit from there
+//
+// (*) 6. We'll re-factor a bit from there
+//        - This is where we are. The memory handling is a mess. That's partly because it's
+//          a mess in the original paper (they're kind of getting away with it because
+//          Rust tracks lifetimes, but it's still thrashing the system memory pool). Improving
+//          the state of memory is goal #1.
+//
 // 7. We'll start implementing the rest of the paper
 // 8. We can worry about performance/allocations in the distant future
 //
