@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const DisjointSet = @import("zunion").DisjointSet;
 
 // The strategy here is going to be
 // 1. Insert dummy types for all the finicky structures (dictionaries, union-find, allocators, ...)
@@ -46,21 +47,6 @@ pub fn Dict(comptime K: type, comptime V: type) type {
         pub fn remove(self: *@This(), key: K) void {
             _ = self;
             _ = key;
-        }
-    };
-}
-
-pub fn DisjointSet(comptime T: type) type {
-    return struct {
-        value: T,
-
-        pub fn find(self: *@This()) *@This() {
-            return self;
-        }
-
-        pub fn join(self: *@This(), other: *@This()) void {
-            _ = self;
-            _ = other;
         }
     };
 }
@@ -130,17 +116,20 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             self.allocator.destroy(self.raw_arena);
         }
 
-        pub fn add(self: *@This(), _enode: ENode) *EClass {
+        pub fn add(self: *@This(), _enode: ENode) !*EClass {
             var enode = self.canonicalize(_enode);
             if (self.hashcons.get(enode)) |eclass_ptr| {
                 return eclass_ptr;
             } else {
-                // TODO: allocation/creation/destruction (everywhere, not just here)
-                var eclass: EClass = undefined;
+                var eclass = try self.arena.create(EClass);
+                errdefer self.arena.destroy(eclass);
+                var eclass_set = try U.make(self.arena, eclass);
+                errdefer self.arena.destroy(eclass_set);
+                eclass.set = eclass_set;
                 for (enode.children()) |child|
-                    child.parents.add(enode, &eclass);
-                self.hashcons.add(enode, &eclass);
-                return &eclass;
+                    child.parents.add(enode, eclass);
+                self.hashcons.add(enode, eclass);
+                return eclass;
             }
         }
 
@@ -224,7 +213,7 @@ test {
 
     var enode = try E.ENode.make(.add, .{});
     if (just_false()) {
-        _ = e.add(enode);
+        _ = try e.add(enode);
         try e.rebuild();
     }
 }

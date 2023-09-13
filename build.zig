@@ -15,6 +15,12 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const zunion_pkg = b.dependency("zunion", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zunion_mod = zunion_pkg.module("zunion");
+
     const lib = b.addStaticLibrary(.{
         .name = "zegg2",
         // In this case the main source file is merely a path, however, in more
@@ -23,6 +29,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lib.addModule("zunion", zunion_mod);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -36,6 +43,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    main_tests.addModule("zunion", zunion_mod);
 
     const run_main_tests = b.addRunArtifact(main_tests);
 

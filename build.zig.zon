@@ -1,0 +1,11 @@
+.{
+    .name = "zegg2",
+    .version = "0.0.0",
+    .dependencies = .{
+        .zunion = .{
+            .url = "https://github.com/hmusgrave/zunion/archive/9cf8401f66529b41b5cb2776dbf8cab6b4b7865c.tar.gz",
+	    .hash = "1220fca3514c08188fde21bfca1e556f3a85d091063cf9b01f094adfbff3d9aefdc0",
+        },
+    },
+
+}
