@@ -21,6 +21,14 @@ pub fn build(b: *std.Build) void {
     });
     const zunion_mod = zunion_pkg.module("zunion");
 
+    const module = b.addModule("zegg", .{
+        .source_file = .{ .path = "src/main.zig" },
+        .dependencies = &.{
+            .{ .name = "zunion", .module = zunion_mod },
+        },
+    });
+    _ = module;
+
     const lib = b.addStaticLibrary(.{
         .name = "zegg",
         // In this case the main source file is merely a path, however, in more
