@@ -73,6 +73,34 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
                     target.* = c;
                 return rtn;
             }
+
+            fn _hash(ctx: HashContext, key: @This()) u64 {
+                _ = ctx;
+                var hasher = std.hash.Wyhash.init(0);
+                hasher.update(std.mem.asBytes(&@intFromEnum(key.op)));
+                hasher.update(std.mem.asBytes(&key._count));
+                for (key._buffer[0..key._count]) |eclass_ptr|
+                    hasher.update(std.mem.asBytes(&@intFromPtr(eclass_ptr)));
+                return hasher.final();
+            }
+
+            fn _eql(ctx: HashContext, a: @This(), b: @This()) bool {
+                _ = ctx;
+                if (a.op != b.op)
+                    return false;
+                if (a._count != b._count)
+                    return false;
+                for (a._buffer[0..a._count], b._buffer[0..b._count]) |x, y| {
+                    if (x != y)
+                        return false;
+                }
+                return true;
+            }
+
+            pub const HashContext = struct {
+                pub const hash = _hash;
+                pub const eql = _eql;
+            };
         };
 
         pub const U = DisjointSet(*EClass);
@@ -82,7 +110,9 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             set: *U,
         };
 
-        hashcons: Dict(ENode, *EClass),
+        const HashCons = std.HashMapUnmanaged(ENode, *EClass, ENode.HashContext, 80);
+
+        hashcons: HashCons,
         worklist: std.ArrayList(*EClass),
         // TODO: the memory usage in this data structure is fairly fragmented, but some patterns
         // are optimizable, like the constant create/destroy of the hash map for counting
@@ -102,7 +132,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             errdefer worklist.deinit();
 
             return @This(){
-                .hashcons = undefined,
+                .hashcons = HashCons{},
                 .worklist = worklist,
                 .allocator = allocator,
                 .raw_arena = raw_arena,
@@ -110,7 +140,8 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             };
         }
 
-        pub fn deinit(self: *const @This()) void {
+        pub fn deinit(self: *@This()) void {
+            self.hashcons.deinit(self.allocator);
             self.worklist.deinit();
             self.raw_arena.deinit();
             self.allocator.destroy(self.raw_arena);
@@ -128,7 +159,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
                 eclass.set = eclass_set;
                 for (enode.children()) |child|
                     child.parents.add(enode, eclass);
-                self.hashcons.add(enode, eclass);
+                try self.hashcons.put(self.allocator, enode, eclass);
                 return eclass;
             }
         }
@@ -172,8 +203,9 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
         pub fn repair(self: *@This(), eclass: *EClass) !void {
             var p_iter = eclass.parents.iter();
             while (p_iter.next()) |kv| {
-                self.hashcons.remove(kv.key);
-                self.hashcons.add(
+                _ = self.hashcons.remove(kv.key);
+                try self.hashcons.put(
+                    self.allocator,
                     self.canonicalize(kv.key),
                     self.find(kv.val),
                 );
