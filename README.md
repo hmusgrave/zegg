@@ -17,7 +17,7 @@ Zig has a package manager. Something like the following ought to work.
     .version = "0.0.0",
     .dependencies = .{
         .zunion = .{
-            .url = "https://github.com/hmusgrave/zegg/archive/f0ed8c26d969378572d67cab9fa9b8cc2a9f7484.tar.gz",
+            .url = "https://github.com/hmusgrave/zegg/archive/ba5568f7b3615c636ab987bf71f0eab9fa266e73.tar.gz",
         },
     },
 
