@@ -18,39 +18,6 @@ const DisjointSet = @import("zunion").DisjointSet;
 //    attached to the class (EClassState maybe?) and just use the DisjointSet pointer
 //    structure as the EClass.
 
-pub fn Dict(comptime K: type, comptime V: type) type {
-    return struct {
-        pub const Iter = struct {
-            pub fn next(self: *@This()) ?struct { key: K, val: V } {
-                _ = self;
-                return null;
-            }
-        };
-
-        pub fn iter(self: *const @This()) Iter {
-            _ = self;
-            return .{};
-        }
-
-        pub fn get(self: *const @This(), key: K) ?V {
-            _ = self;
-            _ = key;
-            return null;
-        }
-
-        pub fn add(self: *@This(), key: K, val: V) void {
-            _ = self;
-            _ = key;
-            _ = val;
-        }
-
-        pub fn remove(self: *@This(), key: K) void {
-            _ = self;
-            _ = key;
-        }
-    };
-}
-
 pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
     return struct {
         pub const ENode = struct {
@@ -106,14 +73,15 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
         pub const U = DisjointSet(*EClass);
 
         pub const EClass = struct {
-            parents: Dict(ENode, *@This()),
             set: *U,
+            parents: HashCons = .{},
         };
 
         const HashCons = std.HashMapUnmanaged(ENode, *EClass, ENode.HashContext, 80);
 
         hashcons: HashCons,
         worklist: std.ArrayList(*EClass),
+        all_eclasses: std.AutoHashMapUnmanaged(*EClass, void),
         // TODO: the memory usage in this data structure is fairly fragmented, but some patterns
         // are optimizable, like the constant create/destroy of the hash map for counting
         // unique eclasses
@@ -134,6 +102,7 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
             return @This(){
                 .hashcons = HashCons{},
                 .worklist = worklist,
+                .all_eclasses = std.AutoHashMapUnmanaged(*EClass, void){},
                 .allocator = allocator,
                 .raw_arena = raw_arena,
                 .arena = raw_arena.allocator(),
@@ -141,6 +110,9 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
         }
 
         pub fn deinit(self: *@This()) void {
+            var iter = self.all_eclasses.keyIterator();
+            while (iter.next()) |eclass_ptr|
+                eclass_ptr.*.parents.deinit(self.allocator);
             self.hashcons.deinit(self.allocator);
             self.worklist.deinit();
             self.raw_arena.deinit();
@@ -157,8 +129,12 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
                 var eclass_set = try U.make(self.arena, eclass);
                 errdefer self.arena.destroy(eclass_set);
                 eclass.set = eclass_set;
+                try self.all_eclasses.put(self.arena, eclass, {});
+                errdefer {
+                    _ = self.all_eclasses.remove(eclass);
+                }
                 for (enode.children()) |child|
-                    child.parents.add(enode, eclass);
+                    try child.parents.put(self.allocator, enode, eclass);
                 try self.hashcons.put(self.allocator, enode, eclass);
                 return eclass;
             }
@@ -201,26 +177,26 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
         }
 
         pub fn repair(self: *@This(), eclass: *EClass) !void {
-            var p_iter = eclass.parents.iter();
+            var p_iter = eclass.parents.iterator();
             while (p_iter.next()) |kv| {
-                _ = self.hashcons.remove(kv.key);
+                _ = self.hashcons.remove(kv.key_ptr.*);
                 try self.hashcons.put(
                     self.allocator,
-                    self.canonicalize(kv.key),
-                    self.find(kv.val),
+                    self.canonicalize(kv.key_ptr.*),
+                    self.find(kv.value_ptr.*),
                 );
             }
+            var p_clone = try eclass.parents.clone(self.allocator);
+            defer p_clone.deinit(self.allocator);
+            eclass.parents.clearRetainingCapacity();
 
-            var new_parents: Dict(ENode, *EClass) = undefined;
-            var new_iter = eclass.parents.iter();
+            var new_iter = p_clone.iterator();
             while (new_iter.next()) |kv| {
-                var p_node = self.canonicalize(kv.key);
-                if (new_parents.get(p_node)) |p_class|
-                    _ = try self.merge(kv.val, p_class); // TODO: Should merge even return anything?
-                new_parents.add(p_node, self.find(kv.val));
+                var p_node = self.canonicalize(kv.key_ptr.*);
+                if (eclass.parents.get(p_node)) |p_class|
+                    _ = try self.merge(kv.value_ptr.*, p_class); // TODO: Should merge even return anything?
+                try eclass.parents.put(self.allocator, p_node, self.find(kv.value_ptr.*));
             }
-
-            eclass.parents = new_parents;
         }
     };
 }
