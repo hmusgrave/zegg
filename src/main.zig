@@ -17,27 +17,6 @@ const Allocator = std.mem.Allocator;
 //    attached to the class (EClassState maybe?) and just use the DisjointSet pointer
 //    structure as the EClass.
 
-pub fn Set(comptime T: type) type {
-    return struct {
-        pub const Iter = struct {
-            pub fn next(self: *@This()) ?T {
-                _ = self;
-                return null;
-            }
-        };
-
-        pub fn iter(self: *const @This()) Iter {
-            _ = self;
-            return .{};
-        }
-
-        pub fn add(self: *@This(), x: T) void {
-            _ = self;
-            _ = x;
-        }
-    };
-}
-
 pub fn Dict(comptime K: type, comptime V: type) type {
     return struct {
         pub const Iter = struct {
@@ -119,6 +98,9 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
 
         hashcons: Dict(ENode, *EClass),
         worklist: std.ArrayList(*EClass),
+        // TODO: the memory usage in this data structure is fairly fragmented, but some patterns
+        // are optimizable, like the constant create/destroy of the hash map for counting
+        // unique eclasses
         allocator: Allocator,
         raw_arena: *std.heap.ArenaAllocator,
         arena: Allocator,
@@ -188,12 +170,13 @@ pub fn EGraph(comptime OpType: type, comptime max_node_children: usize) type {
                 var todo = try self.worklist.clone();
                 defer todo.deinit();
                 self.worklist.clearRetainingCapacity();
-                var set: Set(*EClass) = undefined;
+                var set = std.AutoHashMapUnmanaged(*EClass, void){};
+                defer set.deinit(self.allocator);
                 for (todo.items) |child|
-                    set.add(self.find(child));
-                var set_iter = set.iter();
+                    try set.put(self.allocator, self.find(child), {});
+                var set_iter = set.keyIterator();
                 while (set_iter.next()) |eclass|
-                    try self.repair(eclass);
+                    try self.repair(eclass.*);
             }
         }
 
