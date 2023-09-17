@@ -14,6 +14,15 @@ const DisjointSet = @import("zunion").DisjointSet;
 //          a mess in the original paper (they're kind of getting away with it because
 //          Rust tracks lifetimes, but it's still thrashing the system memory pool). Improving
 //          the state of memory is goal #1.
+//     7. Egglog (egg+datalog+database+worst-case-optimal-joins+...) has a lot of good ideas.
+//        We might actually (a) restructure the computation in terms of relational algebra,
+//        re-write the optimization algorithms in terms of their actual temporal dependencies
+//        (as opposed to the false temporal dependencies implied by the current structure of
+//        iterating through classes sequentially), examine whether their replacement for
+//        analyses makes sense for us, figure out which tuples live for how long, take
+//        inspiration from leap-frog joins (the worst-case join wiki seems to reference an
+//        update to this paper?) arxiv.org/pdf/1210.0481.pdf, and then implement the data/algorithm
+//        in terms of those explicit set semantics rather than as an ad-hoc structure.
 //
 // 7. We'll start implementing the rest of the paper
 // 8. We can worry about performance/allocations in the distant future
